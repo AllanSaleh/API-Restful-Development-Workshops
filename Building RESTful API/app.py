@@ -1,5 +1,3 @@
-# 1. Create new Flask app with Data Validation using Flask-Marshmallow
-
 # Why Data Validation is important?
 # Ensure that the data submitted to the API adheres to predefined formats, preventing errors and ensuring consistency.
 
@@ -11,235 +9,121 @@
 
 from flask import Flask, request, jsonify
 from flask_marshmallow import Marshmallow
-# Part 3: from db_connection import db_connection
-from db_connection import db_connection
-# Part 3: from marshmallow import fields, ValidationError
+# Part 4: from flask_sqlalchemy import SQLAlchemy
+from flask_sqlalchemy import SQLAlchemy # Import SQLAlchemy for ORM
 from marshmallow import fields, ValidationError
 
 app = Flask(__name__)
 ma = Marshmallow(app)
 
-# Part 3: Modify our current Schema to match our MySQL database
+# Part 4: Configure SQLAlchemy with database connection details
+# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://username:password@localhost/database_name'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:rootuser@localhost/student_db'
+
+# Part 4: Initialize SQLAlchemy
+db = SQLAlchemy(app)
+
+# Part 4: # Define the Student Model for SQLAlchemy (maps to the students table in the database)
+class Student(db.Model):
+    __tablename__ = 'students' #Explicitly specify the table name
+    id = db.Column(db.Integer, primary_key=True)
+    first_name = db.Column(db.String(50), nullable=False)
+    last_name = db.Column(db.String(50), nullable=False)
+    email = db.Column(db.String(100), nullable=True, unique=True)
+    start_date = db.Column(db.Date, nullable=True)
 
 # Student Schema: Ensures that only the specified fields ('id', 'first_name', 'last_name', 'email', 'start_date') are included in the API's input/output and helps validate that incoming data matches this structure.
-
 class StudentSchema(ma.Schema):
-    # Part 3: Create all field definitions for Student
     id = fields.Int(dump_only=True) # dump_only means we dont input data for this field
     first_name = fields.String(required=True)
     last_name = fields.String(required=True)
     email = fields.Email(required=True)
     start_date = fields.Date()
     class Meta:
-        # update fields to match database fields
         fields = ('id', 'first_name', 'last_name', 'email', 'start_date')
 
 # Create instance of schema
 student_schema = StudentSchema()
-# Part 3: Create instance to handle multiple records
 students_schema = StudentSchema(many=True)
-# Part 3: modify and comment out dummy data
-# students = [
-#     {
-#         "id": 3,
-#         "first_name": "Victoria",
-#         "last_name": "Santiago",
-#         "email": 'victorias@ct.com',
-#         "start_date": "2024-04-01"
-#     }
-# ]
 
-# Part 3: Modify all routes to include database
+# Part 4: Modify all routes to use SQLAlchemy ORM
 
 # Create Route "get_students" & Test GET endpoint with Postman
 @app.route('/get_students')
 def get_students():
-    #Connect to database
-    db = db_connection()
-    if (db):
-        # create "cursor" object to control database, dictionary=True will return objects as dictionaries rather than tuples.
-        cursor = db.cursor(dictionary=True)
-        # write query to get all students
-        query = '''
-            SELECT *
-            FROM students;
-        '''
-        # execute query with cursor
-        cursor.execute(query)
-        # fetch all objects and store into "students" variable
-        students = cursor.fetchall()
-        # close cursor and connection
-        cursor.close()
-        db.close()
-        # serialize and return a jsonifed response of students with 'students_schema.jsonify(students)'
-        return students_schema.jsonify(students)
+    students = Student.query.all() # Fetch all students from the database
+    return jsonify(students_schema.dump(students)) # Serialize and return the students as JSON
 
 # Create Route "add_student" & Test POST endpoint with Postman
 @app.route('/add_student', methods = ['POST'])
 def add_student():
-    #Connect to database
-    db = db_connection()
     # gets our json data
-    new_student = request.get_json()
+    data = request.get_json()
     # validate json with schema
-    errors = student_schema.validate(new_student)
+    errors = student_schema.validate(data)
     # create conditional based on if errors
     if errors:
-        return jsonify(errors), 404
-    # part 3: add student to database
-    else:
-        # create "cursor" object to control database
-        cursor = db.cursor()
-        # new_student details
-        new_student_details = (new_student['first_name'], new_student['last_name'], new_student['email'], new_student['start_date'])
-        # write query to INSERT INTO students with "%s" placeholders for each entry
-        query = '''
-            INSERT INTO students (
-                first_name,
-                last_name,
-                email,
-                start_date
-            ) VALUES (
-                %s,
-                %s,
-                %s,
-                %s
-            );
-        '''
-        # execute query with parameterized values
-        # NOTE: The second argument must be a tuple or a list with all parameters rather than passing multiple arguments
-        cursor.execute(query, new_student_details)
-            
-        # commit the changes to db
-        db.commit()
+        return jsonify(errors), 400
+    
+    # Create a new student object
+    new_student = Student(
+        first_name=data["first_name"],
+        last_name=data['last_name'],
+        email=data['email'],
+        start_date = data.get('start_date') # Use .get() for optional fields
+    )
+    db.session.add(new_student) # Add the new student to the session
+    db.session.commit() # Commit the changes to the database
 
-        # close cursor and connection
-        cursor.close()
-        db.close()
-        
-        # return jsonfied response
-        return jsonify({"message":f"New Student: {new_student['first_name']} was added to the database!"})
+    return jsonify({"message":f"New Student: {new_student.first_name} was added to the database!"})
     
 # create a dynamic route "get_student" to grab specific data
 @app.route('/students/<int:student_id>', methods = ['GET'])
 def get_student(student_id):
-    #Connect to database
-    db = db_connection()
-    if db:
-        # create "cursor" object to control database, dictionary=True will return objects as dictionaries rather than tuples.
-        cursor = db.cursor(dictionary=True)
-        # write query to a single student
-        query = f'''
-            SELECT *
-            FROM students
-            WHERE id={student_id}
-        '''
-        # execute query with cursor
-        cursor.execute(query)
-        
-        # fetch one object and store into "student" variable
-        student = cursor.fetchone()
-        
-        # close cursor and connection
-        cursor.close()
-        db.close()
-        if student:
-            # serialize and return a jsonifed response of students with 'student_schema.jsonify(student)'
-            return student_schema.jsonify(student)
-        else:
-            return jsonify({'message': 'Student not found!'})
-
-
+    student = Student.query.get(student_id) # Fetch the student by ID
+    if not student:
+        return jsonify({"message": "Student not found!"}), 404
+    return jsonify(student_schema.dump(student)) # Serialize and return the student
 
 # create a dynamic route "update_student"
 @app.route('/students/<int:student_id>', methods = ['PUT'])
 def update_student(student_id):
-    #Connect to database
-    db = db_connection()
-    if db:
-        # gets our json data
-        student_to_update = request.get_json()
+    # gets our json data
+    data = request.get_json()
+    # validate json with schema
+    errors = student_schema.validate(data)
+    # create conditional based on if errors
+    if errors:
+        return jsonify(errors), 400
+    
+    student = Student.query.get_or_404(student_id) # Fetch the student by ID
+    if not student:
+        return jsonify({"message": "Student not found!"}), 404
+    
+    # Update student fields
+    student.first_name = data['first_name']
+    student.last_name = data['last_name']
+    student.email = data['email']
+    student.start_date = data['start_date']
 
-        # validate json with schema
-        errors = student_schema.validate(student_to_update)
-        # create conditional based on if errors
-        if errors:
-            return jsonify(errors), 404
-        else:
-            # create "cursor" object to control database
-            cursor = db.cursor()
-            # check if student exists
-            query = f'''
-                SELECT *
-                FROM students
-                WHERE id={student_id}
-            '''
-            # execute query
-            cursor.execute(query)
-            # fetch one student object
-            student = cursor.fetchone()
-            # if we get a valid student object
-            if student:
-                # new_student details
-                update_student_details = (student_to_update['first_name'], student_to_update['last_name'], student_to_update['email'], student_to_update['start_date'])
-                # write query to INSERT INTO students with "%s" placeholders for each entry
-                query = f'''
-                    UPDATE students
-                    SET
-                        first_name=%s,
-                        last_name=%s,
-                        email=%s,
-                        start_date=%s
-                    WHERE id={student_id};
-                '''
-                # execute query with parameterized values
-                # NOTE: The second argument must be a tuple or a list with all parameters rather than passing multiple arguments
-                cursor.execute(query, update_student_details)
-                # commit the changes to db
-                db.commit()
-                # close cursor and connection
-                cursor.close()
-                db.close()                
-                # return jsonfied response
-                return jsonify({"message":f"{student_to_update['first_name']} has been updated!"})
-            else:
-                return jsonify({"message":"Student not found!"})
-
+    db.session.commit() # Commit the changes to the database
+    return jsonify({"message":f"{student.first_name} has been updated!"})
 
 # create dynamic route "delete_student"
 @app.route('/students/<int:student_id>', methods = ['DELETE'])
 def delete_student(student_id):
-    #Connect to database
-    db = db_connection()
-    if db:
-        # create "cursor" object to control database
-        cursor = db.cursor()
-        # check if student exists
-        query = f'''
-            SELECT *
-            FROM students
-            WHERE id={student_id}
-        '''
-        # execute query
-        cursor.execute(query)
-        # fetch one student object
-        student = cursor.fetchone()
-        # if we get a valid student object
-        if student:
-            # write delete query
-            query = f'''
-                DELETE
-                FROM students
-                WHERE id={student_id}
-            '''
-            #execute query
-            cursor.execute(query)
-            # commit the changes to db
-            db.commit()
-            # close cursor and connection
-            cursor.close()
-            db.close()
-            # return jsonfied response
-            return jsonify({"message":f"Student id: {student_id} has been deleted!"})
-        else:
-            return jsonify({"message": "Student not found!"})
+    student = Student.query.get_or_404(student_id) # Fetch the student by ID
+    if not student:
+        return jsonify({"message": "Student not found!"}), 404
+    
+    db.session.delete(student) # Mark the student for deletion
+    db.session.commit() # Commit the deletion to the database
+    return jsonify({"message":f"{student.first_name} has been deleted!"})
+
+# Initialize the database and create tables
+with app.app_context():
+    db.create_all()
+
+# Main entry point to run the application
+if __name__ == '__main__':
+    app.run(debug=True) # Run the Flask app in debug mode
